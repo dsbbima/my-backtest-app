@@ -1,5 +1,19 @@
-streamlit
-backtrader
-pandas
-yfinance
-matplotlib
+# LIBRARY INTI UNTUK WEB DAN BACKTEST
+streamlit==1.30.0          # Framework web interaktif (Ganti dengan versi terbaru jika ada)
+backtrader==1.9.76.123      # Mesin backtest yang kuat dan stabil
+
+# DATA ACQUISITION
+yfinance==0.2.36            # Pengambilan data historis yang mudah dari Yahoo Finance
+ccxt==4.1.66                # Library canggih untuk data dan trading Kripto (Jika diperlukan)
+
+# LIBRARY MANIPULASI DATA (MODERN)
+pandas==2.2.0               # Standar industri untuk analisis data terstruktur
+numpy==1.26.3               # Fondasi komputasi numerik
+
+# LIBRARY VISUALISASI (INTERAKTIF DAN CANGGIH)
+plotly==5.18.0              # Library visualisasi interaktif yang modern, lebih baik dari Matplotlib untuk web
+matplotlib==3.8.2           # Tetap diperlukan oleh Backtrader untuk output plot dasar
+
+# UTILITIES DAN MANAJEMEN WAKTU
+python-dotenv==1.0.1        # Untuk mengelola variabel lingkungan/kunci API (penting untuk produksi)
+pendulum==0.8.0             # Manajemen datetime yang lebih mudah dan aman daripada modul standar
