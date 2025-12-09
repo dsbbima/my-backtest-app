@@ -1,55 +1,71 @@
 import backtrader as bt
-import yfinance as yf
 import pandas as pd
+import numpy as np
 
 # Definisi Strategi Sederhana: Moving Average Crossover
 class MACross(bt.Strategy):
+    """
+    Strategi Beli/Jual ketika Fast MA memotong Slow MA.
+    """
     params = (
         ('fast_period', 10),
         ('slow_period', 30)
     )
 
     def __init__(self):
-        # Indikator yang akan digunakan
+        # Indikator yang digunakan
         self.fast_ma = bt.indicators.SimpleMovingAverage(self.data, period=self.p.fast_period)
         self.slow_ma = bt.indicators.SimpleMovingAverage(self.data, period=self.p.slow_period)
-        
         self.crossover = bt.indicators.CrossOver(self.fast_ma, self.slow_ma)
         
         self.order = None
+        
+        # Variabel untuk menyimpan data sinyal dan nilai portofolio untuk plot
+        self.buys = []
+        self.sells = []
+        self.equity_curve = []
 
     def next(self):
+        # Simpan nilai portofolio untuk Kurva Ekuitas
+        self.equity_curve.append(self.broker.getvalue())
+
         if self.order:
             return  # Tunggu order selesai
 
-        # Jika belum punya posisi
+        # Sinyal Beli (Fast MA > Slow MA)
         if not self.position:
-            # Garis Cepat memotong Garis Lambat dari bawah ke atas (BUY)
             if self.crossover > 0:
                 self.order = self.buy()
-        
-        # Jika sudah punya posisi
+                self.buys.append(self.data.datetime.date(0)) # Simpan tanggal beli
+
+        # Sinyal Jual (Fast MA < Slow MA)
         else:
-            # Garis Cepat memotong Garis Lambat dari atas ke bawah (SELL/EXIT)
             if self.crossover < 0:
                 self.order = self.sell()
+                self.sells.append(self.data.datetime.date(0)) # Simpan tanggal jual
+
+    def notify_order(self, order):
+        # Pastikan order diselesaikan untuk menghindari duplikasi
+        if order.status in [order.Completed]:
+            self.order = None
 
 # Fungsi utama untuk menjalankan backtest
-def run_backtest(ticker, start_date, end_date, fast_period, slow_period, initial_cash):
-    # 1. Unduh Data
-    try:
-        data = yf.download(ticker, start=start_date, end=end_date)
-        # Konversi ke format yang disukai Backtrader
-        data_feed = bt.feeds.PandasData(dataname=data)
-    except Exception as e:
-        return {"error": f"Gagal mengunduh data: {e}"}
+def run_backtest(data_df, fast_period, slow_period, initial_cash):
+    """
+    Menjalankan Backtest dan mengembalikan metrik serta data plot.
+    """
+    if data_df.empty:
+        return {"error": "Data kosong."}, None, None, None
 
-    # 2. Inisialisasi Cerebro (Mesin Utama Backtrader)
+    # Inisialisasi Cerebro (Mesin Backtrader)
     cerebro = bt.Cerebro()
+    
+    # Feed Data (Backtrader menerima Pandas DataFrame)
+    data_feed = bt.feeds.PandasData(dataname=data_df)
     cerebro.adddata(data_feed)
     cerebro.broker.setcash(initial_cash)
     
-    # Tambahkan Strategi dengan Parameter yang Diberikan Pengguna
+    # Tambahkan Strategi
     cerebro.addstrategy(MACross, 
                         fast_period=fast_period, 
                         slow_period=slow_period)
@@ -58,45 +74,35 @@ def run_backtest(ticker, start_date, end_date, fast_period, slow_period, initial
     cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
     cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
     
-    # Initial Value
-    start_value = cerebro.broker.getvalue()
-
-    # 3. Jalankan Backtest
-    print(f"Starting Portfolio Value: {start_value:.2f}")
+    # Jalankan Backtest
     results = cerebro.run()
     
-    # Final Value
-    final_value = cerebro.broker.getvalue()
-    
-    # 4. Ambil dan Format Hasil
     strat = results[0]
-    
-    # Ekstrak Data untuk Grafik
-    date_list = [bt.num2date(d).date() for d in cerebro.datas[0].datetime.array]
-    value_list = []
-    
-    # Dapatkan nilai portofolio dari salah satu analyzer (misalnya, Equity Curve)
-    # Ini memerlukan analyzer khusus yang lebih kompleks atau modifikasi, 
-    # untuk kesederhanaan, kita gunakan nilai akhir saja
+    final_value = cerebro.broker.getvalue()
     
     # Ekstrak Metrik
     returns_analyzer = strat.analyzers.returns.get_analysis()
     drawdown_analyzer = strat.analyzers.drawdown.get_analysis()
 
     metrics = {
-        "ticker": ticker,
         "start_cash": initial_cash,
         "final_cash": final_value,
-        "total_return_percent": returns_analyzer['rtot'] * 100,
-        "annual_return_percent": returns_analyzer['rann'] * 100,
-        "max_drawdown_percent": drawdown_analyzer['max']['drawdown'],
-        "sharpe_ratio": returns_analyzer.get('sharperatio', 'N/A'), # Sharpe Ratio kadang tidak terhitung jika data terlalu pendek
+        # Menggunakan .get(key, default) untuk menghindari error jika data terlalu pendek
+        "total_return_percent": returns_analyzer.get('rtot', 0) * 100,
+        "annual_return_percent": returns_analyzer.get('rann', 0) * 100,
+        "max_drawdown_percent": drawdown_analyzer['max']['drawdown'] if drawdown_analyzer.get('max') else 0,
+        "sharpe_ratio": returns_analyzer.get('sharperatio', 'N/A'),
     }
     
-    # 5. Output Grafik (simpan sementara atau gunakan Plotly)
-    # Untuk Streamlit, kita akan menggunakan metode plot bawaan Cerebro yang disimpan ke file/buffer.
-    # Namun, cara yang lebih mudah adalah dengan menggunakan plot equity curve secara manual. 
-    # Karena Backtrader sulit diintegrasikan dengan Streamlit secara mulus untuk plot, 
-    # kita akan plot data secara manual di file streamlit_ui.py
+    # Siapkan data untuk Plotting Kurva Ekuitas (hanya sebanyak data yang diproses)
+    equity_values = strat.equity_curve
+    equity_df = pd.DataFrame({
+        'Date': data_df.index[:len(equity_values)], # Sesuaikan panjang data dengan curve
+        'Value': equity_values
+    })
     
-    return metrics, cerebro # Mengembalikan cerebro untuk visualisasi di Streamlit
+    # Sinyal untuk plot
+    buy_dates = strat.buys
+    sell_dates = strat.sells
+
+    return metrics, equity_df, buy_dates, sell_dates
